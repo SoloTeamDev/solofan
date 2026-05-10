@@ -9,6 +9,9 @@
 import Foundation
 import Combine
 import IOKit
+#if canImport(Darwin)
+import Darwin
+#endif
 
 // MARK: - Data Structures
 
@@ -100,6 +103,8 @@ private let SMC_CMD_READ_KEYINFO: UInt8 = 9
 // MARK: - System Monitor Class
 
 class SystemMonitor: ObservableObject {
+    static let monitoringIntervalDidChangeNotification = NSNotification.Name("MonitoringIntervalChanged")
+    static let monitoringIntervalUserInfoKey = "monitoringInterval"
     @Published var cpuTemperature: Double?
     @Published var gpuTemperature: Double?
     @Published var fanSpeeds: [Int] = []
@@ -110,10 +115,18 @@ class SystemMonitor: ObservableObject {
     @Published var hasAccess = false
     @Published var lastError: String?
     
+    private static let minimumMonitoringInterval: TimeInterval = 0.5
+    private static let minimumRosettaMonitoringInterval: TimeInterval = 3.0
     private var smcConnection: io_connect_t = 0
     private var monitoringTimer: Timer?
-    private let monitoringInterval: TimeInterval = 2.0
+    private var activeMonitoringInterval: TimeInterval = Self.minimumMonitoringInterval
+    private var lastConfiguredMonitoringInterval: TimeInterval = UserDefaultsManager.shared.monitoringInterval
+    private var defaultsObserver: NSObjectProtocol?
     private var keyInfoCache: [UInt32: SMCKeyData_keyInfo_t] = [:]
+    private let monitoringStateQueue = DispatchQueue(label: "fan.systemmonitor.state")
+    private let intervalChangeThreshold: TimeInterval = 0.001
+    private var isUpdatingReadings = false
+    private static let isRosettaTranslatedAtRuntime = isRunningUnderRosettaTranslation()
     
     // Temperature sensor keys - ordered by priority
     // TC0P = CPU Proximity, TC0E/TC0F = CPU Core, TCXC = CPU Core (Apple Silicon)
@@ -127,10 +140,25 @@ class SystemMonitor: ObservableObject {
     init() {
         // Try to connect on init
         _ = openSMCConnection()
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: Self.monitoringIntervalDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self else { return }
+            let configuredInterval = notification.userInfo?[Self.monitoringIntervalUserInfoKey] as? TimeInterval
+                ?? UserDefaultsManager.shared.monitoringInterval
+            guard self.hasIntervalChangedSignificantly(oldValue: self.lastConfiguredMonitoringInterval, newValue: configuredInterval) else { return }
+            self.lastConfiguredMonitoringInterval = configuredInterval
+            self.refreshMonitoringTimerIfNeeded()
+        }
     }
     
     deinit {
         stopMonitoring()
+        if let observer = defaultsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
         closeSMCConnection()
     }
     
@@ -250,16 +278,17 @@ class SystemMonitor: ObservableObject {
         // Start periodic timer
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.monitoringTimer = Timer.scheduledTimer(withTimeInterval: self.monitoringInterval, repeats: true) { [weak self] _ in
-                self?.updateReadings()
-            }
-            RunLoop.current.add(self.monitoringTimer!, forMode: .common)
+            self.startMonitoringTimer()
         }
     }
     
     func stopMonitoring() {
         monitoringTimer?.invalidate()
         monitoringTimer = nil
+        activeMonitoringInterval = Self.effectiveMonitoringInterval(
+            userConfiguredInterval: UserDefaultsManager.shared.monitoringInterval,
+            isRosettaTranslated: Self.isRosettaTranslatedAtRuntime
+        )
         isMonitoring = false
     }
     
@@ -285,8 +314,20 @@ class SystemMonitor: ObservableObject {
     // MARK: - Reading Updates
     
     private func updateReadings() {
+        let shouldStartUpdate = monitoringStateQueue.sync { () -> Bool in
+            if isUpdatingReadings { return false }
+            isUpdatingReadings = true
+            return true
+        }
+        guard shouldStartUpdate else { return }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
+            defer {
+                self.monitoringStateQueue.sync {
+                    self.isUpdatingReadings = false
+                }
+            }
             
             // Read temperatures
             var cpuTemp: Double? = nil
@@ -374,6 +415,59 @@ class SystemMonitor: ObservableObject {
                 }
             }
         }
+    }
+
+    private func startMonitoringTimer() {
+        let configuredInterval = UserDefaultsManager.shared.monitoringInterval
+        let interval = Self.effectiveMonitoringInterval(
+            userConfiguredInterval: configuredInterval,
+            isRosettaTranslated: Self.isRosettaTranslatedAtRuntime
+        )
+        lastConfiguredMonitoringInterval = configuredInterval
+        activeMonitoringInterval = interval
+        monitoringTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.updateReadings()
+        }
+        if let monitoringTimer {
+            RunLoop.main.add(monitoringTimer, forMode: .common)
+        }
+    }
+
+    private func refreshMonitoringTimerIfNeeded() {
+        guard isMonitoring else { return }
+        let nextInterval = Self.effectiveMonitoringInterval(
+            userConfiguredInterval: UserDefaultsManager.shared.monitoringInterval,
+            isRosettaTranslated: Self.isRosettaTranslatedAtRuntime
+        )
+        guard hasIntervalChangedSignificantly(oldValue: activeMonitoringInterval, newValue: nextInterval) else { return }
+        monitoringTimer?.invalidate()
+        monitoringTimer = nil
+        startMonitoringTimer()
+    }
+
+    private func hasIntervalChangedSignificantly(oldValue: TimeInterval, newValue: TimeInterval) -> Bool {
+        abs(newValue - oldValue) > intervalChangeThreshold
+    }
+
+    static func effectiveMonitoringInterval(
+        userConfiguredInterval: TimeInterval,
+        isRosettaTranslated: Bool
+    ) -> TimeInterval {
+        if isRosettaTranslated {
+            return max(userConfiguredInterval, minimumRosettaMonitoringInterval)
+        }
+        return max(userConfiguredInterval, minimumMonitoringInterval)
+    }
+
+    private static func isRunningUnderRosettaTranslation() -> Bool {
+#if arch(x86_64) && canImport(Darwin)
+        var translated: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        let result = sysctlbyname("proc_translated", &translated, &size, nil, 0)
+        return result == 0 && translated == 1
+#else
+        return false
+#endif
     }
     
     // MARK: - SMC Data Parsing

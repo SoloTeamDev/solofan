@@ -49,10 +49,34 @@ final class SystemMonitorTests: XCTestCase {
     }
     
     func testFanReadingStructure() {
-        let reading = FanReading(speed: 2500, minSpeed: 1000, maxSpeed: 6000)
+        let reading = FanReading(id: 0, speed: 2500, minSpeed: 1000, maxSpeed: 6000)
         
         XCTAssertEqual(reading.speed, 2500)
         XCTAssertEqual(reading.minSpeed, 1000)
         XCTAssertEqual(reading.maxSpeed, 6000)
+    }
+
+    func testEffectiveMonitoringIntervalUsesUserValueWhenNotRosetta() {
+        let interval = SystemMonitor.effectiveMonitoringInterval(
+            userConfiguredInterval: 5.0,
+            isRosettaTranslated: false
+        )
+        XCTAssertEqual(interval, 5.0)
+    }
+
+    func testEffectiveMonitoringIntervalAppliesRosettaMinimum() {
+        let interval = SystemMonitor.effectiveMonitoringInterval(
+            userConfiguredInterval: 1.0,
+            isRosettaTranslated: true
+        )
+        XCTAssertEqual(interval, 3.0)
+    }
+
+    func testEffectiveMonitoringIntervalAppliesGlobalMinimum() {
+        let interval = SystemMonitor.effectiveMonitoringInterval(
+            userConfiguredInterval: 0.0,
+            isRosettaTranslated: false
+        )
+        XCTAssertEqual(interval, 0.5)
     }
 }
