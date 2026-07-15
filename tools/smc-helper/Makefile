@@ -1,5 +1,5 @@
 CC = clang
-CFLAGS = -Wall -O2 -framework IOKit -framework CoreFoundation
+CFLAGS = -Wall -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -framework IOKit -framework CoreFoundation
 TARGET = smc-helper
 
 all: $(TARGET)
@@ -11,6 +11,6 @@ clean:
 	rm -f $(TARGET)
 
 install: $(TARGET)
-	cp $(TARGET) ../../fan/
+	cp $(TARGET) ../../fan/Resources/
 
 .PHONY: all clean install
