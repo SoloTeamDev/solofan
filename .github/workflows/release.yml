@@ -128,9 +128,9 @@ jobs:
           ## SoloFan v${{ steps.version.outputs.version }}
 
           ### Highlights
-          - **Settings** — Flat background, wide floating Liquid Glass sidebar panel
-          - Widget dashboard, app icon fix, desktop adaptive UI
-          - Liquid Glass Form settings (v1.6.1)
+          - Versioned SoloFan release artifacts for macOS
+          - Signed app bundle and packaged ZIP/DMG outputs
+          - SHA256 checksums included for download verification
 
           ### Installation
 
