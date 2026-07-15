@@ -128,7 +128,7 @@ struct FanSpeedView: View {
             .onChange(of: localSpeed) { _, newValue in
                 unifiedDebounceTask?.cancel()
                 unifiedDebounceTask = Task {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: 250_000_000)
                     guard !Task.isCancelled else { return }
                     await MainActor.run {
                         if Int(newValue) != viewModel.manualSpeed {
@@ -251,7 +251,7 @@ struct FanSpeedView: View {
     private func debouncedApplyPerFan(index: Int, value: Double) {
         perFanDebounceTasks[index]?.cancel()
         perFanDebounceTasks[index] = Task {
-            try? await Task.sleep(nanoseconds: 800_000_000)
+            try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 perFanApplying.insert(index)
