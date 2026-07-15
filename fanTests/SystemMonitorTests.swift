@@ -41,6 +41,17 @@ final class SystemMonitorTests: XCTestCase {
         XCTAssertFalse(monitor.isMonitoring)
     }
     
+    func testPreferredCPUTemperatureKeyOrderMatchesArchitecture() {
+        let monitor = SystemMonitor()
+        let keys = monitor.preferredCPUTemperatureKeys()
+        
+        #if arch(arm64)
+        XCTAssertEqual(Array(keys.prefix(6)), ["Tp09", "Tp0T", "Tp01", "Tp05", "Tp0D", "Tp0b"])
+        #else
+        XCTAssertEqual(Array(keys.prefix(9)), ["TC0P", "TCXC", "TC0E", "TC0F", "TC0D", "TC1C", "TC2C", "TC3C", "TC4C"])
+        #endif
+    }
+    
     func testTemperatureReadingStructure() {
         let reading = TemperatureReading(cpu: 65.5, gpu: 72.3)
         

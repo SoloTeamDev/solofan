@@ -114,9 +114,10 @@ class SystemMonitor: ObservableObject {
     private var monitoringTimer: Timer?
     private let monitoringInterval: TimeInterval = 2.0
     private var keyInfoCache: [UInt32: SMCKeyData_keyInfo_t] = [:]
+    private let smcReadQueue = DispatchQueue(label: "SoloFan.SystemMonitor.smcReadQueue")
     
-    // Temperature sensor keys - ordered by priority
-    // TC0P = CPU Proximity, TC0E/TC0F = CPU Core, TCXC = CPU Core (Apple Silicon)
+    // Temperature sensor keys (legacy/proximity compatibility list)
+    // TC0P = CPU Proximity, TC0E/TC0F = CPU Core, TCXC = Apple Silicon CPU core
     private let cpuTempKeys = ["TC0P", "TCXC", "TC0E", "TC0F", "TC0D", "TC1C", "TC2C", "TC3C", "TC4C"]
     // TGDD = GPU Die, TG0P = GPU Proximity, TG0D = GPU Die
     private let gpuTempKeys = ["TGDD", "TG0P", "TG0D", "TG0E", "TG0F"]
@@ -266,47 +267,39 @@ class SystemMonitor: ObservableObject {
     // MARK: - Fan Detection
     
     private func detectFans() {
-        var count = 0
-        for i in 0..<8 {
-            let key = String(format: "F%dAc", i)
-            if let _ = readSMCValue(key: key) {
-                count += 1
-            } else {
-                break
+        smcReadQueue.async { [weak self] in
+            guard let self = self else { return }
+            var count = 0
+            for i in 0..<8 {
+                let key = String(format: "F%dAc", i)
+                if let _ = self.readSMCValue(key: key) {
+                    count += 1
+                } else {
+                    break
+                }
             }
-        }
-        
-        DispatchQueue.main.async {
-            self.numberOfFans = count
-            print("SMC: Detected \(count) fan(s)")
+            
+            DispatchQueue.main.async {
+                self.numberOfFans = count
+                print("SMC: Detected \(count) fan(s)")
+            }
         }
     }
     
     // MARK: - Reading Updates
     
     private func updateReadings() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        smcReadQueue.async { [weak self] in
             guard let self = self else { return }
             
             // Read temperatures
             var cpuTemp: Double? = nil
             var gpuTemp: Double? = nil
             
-            // Try standard keys first
-            for key in self.cpuTempKeys {
+            for key in self.preferredCPUTemperatureKeys() {
                 if let temp = self.readSMCTemperature(key: key), temp > 0 && temp < 150 {
                     cpuTemp = temp
                     break
-                }
-            }
-            
-            // Try Apple Silicon keys if standard failed
-            if cpuTemp == nil {
-                for key in self.appleChipTempKeys {
-                    if let temp = self.readSMCTemperature(key: key), temp > 0 && temp < 150 {
-                        cpuTemp = temp
-                        break
-                    }
                 }
             }
             
@@ -374,6 +367,14 @@ class SystemMonitor: ObservableObject {
                 }
             }
         }
+    }
+    
+    func preferredCPUTemperatureKeys() -> [String] {
+        #if arch(arm64)
+        return appleChipTempKeys + cpuTempKeys
+        #else
+        return cpuTempKeys + appleChipTempKeys
+        #endif
     }
     
     // MARK: - SMC Data Parsing
