@@ -2,6 +2,12 @@
 
 All notable changes to SoloFan will be documented in this file.
 
+## [1.6.3] - 2026-07-15
+
+### Changed
+- Bumped app version metadata to **1.6.3** (`MARKETING_VERSION`) and build number to **7**.
+- Updated release-facing documentation to reference **v1.6.3** consistently.
+
 ## [1.6.2] - 2026-05-26
 
 ### Changed
