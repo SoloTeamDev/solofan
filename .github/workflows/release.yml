@@ -128,9 +128,9 @@ jobs:
           ## SoloFan v${{ steps.version.outputs.version }}
 
           ### Highlights
-          - Versioned SoloFan release artifacts for macOS
-          - Signed app bundle and packaged ZIP/DMG outputs
-          - SHA256 checksums included for download verification
+          - **M4/M5 fan control** — Manual speeds work in Apple Silicon system mode
+          - **Real die temps** — Stable Apple Silicon CPU/GPU readings (no ~2°C ghosts)
+          - Persistent auto max-speed, quieter menu-bar icon, safer SMC helper
 
           ### Installation
 

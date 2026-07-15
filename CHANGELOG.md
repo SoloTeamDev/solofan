@@ -2,6 +2,21 @@
 
 All notable changes to SoloFan will be documented in this file.
 
+## [1.6.4] - 2026-07-16
+
+### Fixed
+- **M4/M5 fan control**: Manual control now works when Apple Silicon keeps fans in thermalmonitord “system mode” — unlocks via verified mode writes and `Ftst` when needed.
+- **Apple Silicon die temperatures**: CPU/GPU use the hottest real die-cluster sensors (`Tp**` / `Te**` / `Tg**`) instead of gated cores that read ~1–2°C.
+- **GPU temp flicker**: Holds the last valid GPU reading across power-gating instead of dropping to near-zero.
+- **Auto max-speed**: Persists the automatic-mode maximum across launches.
+- **Menu bar icon**: Renders as a proper template image and no longer animates (clears tinting and CPU churn).
+- **Popover lifecycle**: Builds content lazily, releases it on close, and waits until content is attached before showing.
+- **SMC helper**: Fan-only, bounded, clamped writes; stronger privilege fallback for `runSmcHelper`.
+
+### Changed
+- Bumped app version to **1.6.4** (`MARKETING_VERSION`) and build number to **8**.
+- Removed unused `UserDefaultsManager`.
+
 ## [1.6.3] - 2026-07-15
 
 ### Changed
