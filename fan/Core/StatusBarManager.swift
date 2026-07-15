@@ -390,6 +390,11 @@ class StatusBarManager: ObservableObject {
             print("StatusBar: Cannot toggle - button or popover is nil")
             return
         }
+
+        guard popover.contentViewController != nil else {
+            print("StatusBar: Cannot show popover - content view controller is nil")
+            return
+        }
         
         if popover.isShown {
             popover.performClose(nil)
