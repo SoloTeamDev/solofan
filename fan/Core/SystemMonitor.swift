@@ -115,15 +115,31 @@ class SystemMonitor: ObservableObject {
     private let monitoringInterval: TimeInterval = 2.0
     private var keyInfoCache: [UInt32: SMCKeyData_keyInfo_t] = [:]
     
-    // Temperature sensor keys - ordered by priority
-    // TC0P = CPU Proximity, TC0E/TC0F = CPU Core, TCXC = CPU Core (Apple Silicon)
-    private let cpuTempKeys = ["TC0P", "TCXC", "TC0E", "TC0F", "TC0D", "TC1C", "TC2C", "TC3C", "TC4C"]
-    // TGDD = GPU Die, TG0P = GPU Proximity, TG0D = GPU Die
-    private let gpuTempKeys = ["TGDD", "TG0P", "TG0D", "TG0E", "TG0F"]
-    
-    // Apple Silicon specific keys
-    private let appleChipTempKeys = ["Tp09", "Tp0T", "Tp01", "Tp05", "Tp0D", "Tp0b"]
-    
+    // Intel CPU/GPU proximity keys (legacy Macs).
+    private let cpuTempKeysIntel = ["TC0P", "TCXC", "TC0E", "TC0F", "TC0D", "TC1C", "TC2C", "TC3C", "TC4C"]
+    private let gpuTempKeysIntel = ["TGDD", "TG0P", "TG0D", "TG0E", "TG0F"]
+
+    // Apple Silicon die sensors: P/E-core clusters (Tp**/Te**) for CPU, Tg** for
+    // GPU. The exact suffixes vary by chip (M1-M4), so we probe a generous set;
+    // missing keys are simply skipped. Per-core sensors report ~1-2°C when their
+    // core is gated/idle, so callers take the hottest plausible reading, never
+    // the first that parses (which a gated 2°C core would win).
+    private let cpuTempKeysAS = [
+        "Te05", "Te0L", "Te0P", "Te0S",
+        "Tp01", "Tp05", "Tp09", "Tp0D", "Tp0H", "Tp0L", "Tp0P", "Tp0T", "Tp0X",
+        "Tp0b", "Tp0f", "Tp0j", "Tp0n", "Tp0r", "Tp0v", "Tp0z",
+        "Tp19", "Tp1d", "Tp1f", "Tp1h", "Tp1n", "Tp1p", "Tp1t", "Tp1v",
+    ]
+    private let gpuTempKeysAS = ["Tg05", "Tg0D", "Tg0L", "Tg0T", "Tg0V", "Tg0f", "Tg0j", "Tg1f", "Tg1j"]
+
+    // GPU die sensors power-gate when the GPU goes idle: every Tg** key stops
+    // reading at once, so a naive aggregate snaps to nil and the UI flickers
+    // between a number and "--". Hold the last good value for a short window to
+    // ride over those gaps; after it, report nil honestly (GPU genuinely idle).
+    private var lastGPUTemp: Double?
+    private var lastGPUTempAt = Date.distantPast
+    private let gpuTempHoldWindow: TimeInterval = 8.0
+
     init() {
         // Try to connect on init
         _ = openSMCConnection()
@@ -288,33 +304,21 @@ class SystemMonitor: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
-            // Read temperatures
-            var cpuTemp: Double? = nil
-            var gpuTemp: Double? = nil
-            
-            // Try standard keys first
-            for key in self.cpuTempKeys {
-                if let temp = self.readSMCTemperature(key: key), temp > 0 && temp < 150 {
-                    cpuTemp = temp
-                    break
-                }
-            }
-            
-            // Try Apple Silicon keys if standard failed
-            if cpuTemp == nil {
-                for key in self.appleChipTempKeys {
-                    if let temp = self.readSMCTemperature(key: key), temp > 0 && temp < 150 {
-                        cpuTemp = temp
-                        break
-                    }
-                }
-            }
-            
-            for key in self.gpuTempKeys {
-                if let temp = self.readSMCTemperature(key: key), temp > 0 && temp < 150 {
-                    gpuTemp = temp
-                    break
-                }
+            // Read temperatures — hottest plausible die sensor, Apple Silicon
+            // first then Intel proximity as fallback. Hottest (not first) so a
+            // gated ~2°C core never wins over the real cluster temperature.
+            var cpuTemp = self.hottestTemperature(self.cpuTempKeysAS)
+            if cpuTemp == nil { cpuTemp = self.hottestTemperature(self.cpuTempKeysIntel) }
+
+            var gpuTemp = self.hottestTemperature(self.gpuTempKeysAS)
+            if gpuTemp == nil { gpuTemp = self.hottestTemperature(self.gpuTempKeysIntel) }
+
+            // Smooth over brief GPU power-gating so the readout doesn't flicker.
+            if let g = gpuTemp {
+                self.lastGPUTemp = g
+                self.lastGPUTempAt = Date()
+            } else if Date().timeIntervalSince(self.lastGPUTempAt) < self.gpuTempHoldWindow {
+                gpuTemp = self.lastGPUTemp
             }
             
             // Read fan data
@@ -539,6 +543,20 @@ class SystemMonitor: ObservableObject {
 
     private func readSMCTemperature(key: String) -> Double? {
         return readSMCValue(key: key)
+    }
+
+    /// Hottest plausible sensor across a candidate list. Apple Silicon exposes
+    /// many per-core die sensors; gated cores report ~1-2°C, so the `floor`
+    /// filters that garbage and we keep the maximum — the hottest active
+    /// core/cluster — rather than the first key that happens to parse.
+    private func hottestTemperature(_ keys: [String], floor: Double = 10, ceiling: Double = 130) -> Double? {
+        var hottest: Double? = nil
+        for key in keys {
+            if let t = readSMCTemperature(key: key), t > floor, t < ceiling {
+                hottest = max(hottest ?? t, t)
+            }
+        }
+        return hottest
     }
     
     private func readSMCFanSpeed(key: String) -> Int? {
