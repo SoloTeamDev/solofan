@@ -95,11 +95,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func attachPopoverContent() {
-        guard let statusBarManager,
-              let viewModel else { return }
-
-        let popoverView = PopoverView(viewModel: viewModel, statusBarManager: statusBarManager)
-        statusBarManager.setPopoverContent(popoverView)
+        guard let statusBarManager, let viewModel else { return }
+        // Provide a factory, not a live view. The popover builds its content on
+        // open and releases it on close (see StatusBarManager), so the dashboard
+        // gauges and glass panels never render while the popover is hidden.
+        statusBarManager.popoverContentProvider = { [weak viewModel, weak statusBarManager] in
+            guard let viewModel, let statusBarManager else { return NSViewController() }
+            return NSHostingController(
+                rootView: PopoverView(viewModel: viewModel, statusBarManager: statusBarManager)
+            )
+        }
     }
 
     func openSettings() {

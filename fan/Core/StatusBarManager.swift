@@ -3,7 +3,7 @@
 //  ffan
 //
 //  Created by mohamad on 11/1/2026.
-//  Animated status bar icon based on fan speed with dynamic display text
+//  Static status bar icon with dynamic display text (temp / power / fan load)
 //
 
 import AppKit
@@ -13,10 +13,22 @@ import Combine
 class StatusBarManager: ObservableObject {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
-    private var animationTimer: Timer?
     private var refreshTimer: Timer?
-    private var currentRotation: CGFloat = 0
-    /// Latest sampled RPM per fan (from SMC); animation uses the maximum.
+    /// Builds the popover's SwiftUI content on demand. Kept as a factory (not a
+    /// retained view) so the heavy hierarchy — dashboard gauges, Metal glass
+    /// panels, the spinning-fan animation — exists only while the popover is open.
+    var popoverContentProvider: (() -> NSViewController)?
+    private var popoverCloseObserver: PopoverCloseObserver?
+    /// Built once and reused. The menu-bar glyph is intentionally static: a
+    /// per-frame redraw of the status item forces AppKit (and any menu-bar
+    /// manager observing it) to recomposite continuously, pegging a core even
+    /// while the item is hidden. Information lives in the title text, not motion.
+    private lazy var fanIcon: NSImage = {
+        let icon = createFanIcon(size: 16, rotation: 0)
+        icon.isTemplate = true // tinted by the system to match every other menu-bar glyph
+        return icon
+    }()
+    /// Latest sampled RPM per fan (from SMC).
     private var cachedFanSpeeds: [Int] = []
     private var cachedFanMinRPM: [Int] = []
     private var cachedFanMaxRPM: [Int] = []
@@ -59,9 +71,18 @@ class StatusBarManager: ObservableObject {
 
     private func ensurePopoverExists() {
         if popover == nil {
-            popover = NSPopover()
-            popover?.behavior = .transient
-            popover?.contentSize = NSSize(width: 340, height: 600)
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.contentSize = NSSize(width: 340, height: 600)
+            // Release the SwiftUI hierarchy (and its Metal pipeline / animations)
+            // the moment the popover closes — NSPopover otherwise retains its
+            // contentViewController and keeps rendering it in the background.
+            let observer = PopoverCloseObserver { [weak self] in
+                self?.popover?.contentViewController = nil
+            }
+            popover.delegate = observer
+            self.popoverCloseObserver = observer
+            self.popover = popover
         }
     }
 
@@ -77,10 +98,8 @@ class StatusBarManager: ObservableObject {
             return
         }
         
-        // Set initial icon
-        let image = createFanIcon(size: 16, rotation: 0)
-        button.image = image
-        button.image?.isTemplate = false // ensure visible regardless of system tint
+        // Set static icon
+        button.image = fanIcon
         button.title = "SoloFan"
         button.imagePosition = .imageLeft
         button.toolTip = "SoloFan"
@@ -100,8 +119,6 @@ class StatusBarManager: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.closePopover()
-            self.animationTimer?.invalidate()
-            self.animationTimer = nil
 
             if persist {
                 MenuBarIconPreferences.isHidden = true
@@ -128,7 +145,6 @@ class StatusBarManager: ObservableObject {
             self.createStatusItemIfNeeded()
             self.startRefreshTimer()
             self.setDisplayMode(self.displayMode)
-            self.updateAnimationSpeed()
             self.updateDisplay()
 
             print("StatusBar: Menu bar icon shown")
@@ -201,12 +217,6 @@ class StatusBarManager: ObservableObject {
         return image
     }
     
-    func setPopoverContent<Content: View>(_ content: Content) {
-        DispatchQueue.main.async { [weak self] in
-            self?.popover?.contentViewController = NSHostingController(rootView: content)
-        }
-    }
-    
     func updateIcon(fanSpeeds: [Int], fanMinSpeeds: [Int], fanMaxSpeeds: [Int], temperature: Double?, powerWatts: Double? = nil) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -216,7 +226,6 @@ class StatusBarManager: ObservableObject {
             self.displayFanSpeedMax = fanSpeeds.max() ?? 0
             self.currentTemperature = temperature
             self.currentPowerWatts = powerWatts
-            self.updateAnimationSpeed()
             self.updateDisplay()
         }
     }
@@ -243,10 +252,6 @@ class StatusBarManager: ObservableObject {
         return Int(min(100, max(0, round(sum / Double(count) * 100))))
     }
 
-    private func animationReferenceMaxRPM() -> Int {
-        max(cachedFanMaxRPM.max() ?? 0, FanRPMBounds.fallbackMaxWhenSMCUnreadable)
-    }
-    
     func setDisplayMode(_ mode: String) {
         DispatchQueue.main.async { [weak self] in
             self?.displayMode = mode
@@ -316,39 +321,6 @@ class StatusBarManager: ObservableObject {
             }
             return "--°"
         }
-    }
-    
-    private func updateAnimationSpeed() {
-        // Stop existing animation
-        animationTimer?.invalidate()
-        animationTimer = nil
-        
-        guard displayFanSpeedMax > 0 else {
-            // Fan is off, show static icon
-            if let button = statusItem?.button {
-                button.image = createFanIcon(size: 16, rotation: currentRotation)
-            }
-            return
-        }
-        
-        // Calculate animation interval based on fan speed
-        let minInterval: Double = 0.05  // ~20fps (smoother, less CPU)
-        let refMax = Double(animationReferenceMaxRPM())
-        let speedFactor = min(1.0, max(0.0, Double(displayFanSpeedMax) / max(refMax, 1.0)))
-        let rotationSpeed = 1.0 + speedFactor * 5.0  // Much slower: 1-6 degrees per frame
-        
-        animationTimer = Timer.scheduledTimer(withTimeInterval: minInterval, repeats: true) { [weak self] _ in
-            guard let self = self, let button = self.statusItem?.button else { return }
-            
-            self.currentRotation += rotationSpeed
-            if self.currentRotation >= 360 {
-                self.currentRotation -= 360
-            }
-            
-            button.image = self.createFanIcon(size: 16, rotation: self.currentRotation)
-        }
-        
-        RunLoop.current.add(animationTimer!, forMode: .common)
     }
     
     @objc private func statusBarButtonClicked(_ sender: NSButton) {
@@ -422,8 +394,15 @@ class StatusBarManager: ObservableObject {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+if popover.contentViewController == nil {
+    guard let popoverContentProvider else {
+        print("StatusBar: Popover content provider is nil")
+        return
+    }
+    popover.contentViewController = popoverContentProvider()
+}
+popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+popover.contentViewController?.view.window?.makeKey()
         }
     }
     
@@ -432,7 +411,15 @@ class StatusBarManager: ObservableObject {
     }
     
     deinit {
-        animationTimer?.invalidate()
         refreshTimer?.invalidate()
     }
+}
+
+/// Releases popover content when the popover closes. NSPopover retains its
+/// contentViewController, so without this the SwiftUI hierarchy keeps rendering
+/// (and holding a Metal pipeline) while the popover is hidden.
+private final class PopoverCloseObserver: NSObject, NSPopoverDelegate {
+    private let onClose: () -> Void
+    init(onClose: @escaping () -> Void) { self.onClose = onClose }
+    func popoverDidClose(_ notification: Notification) { onClose() }
 }
