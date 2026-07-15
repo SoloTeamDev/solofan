@@ -112,13 +112,12 @@ class FanController: ObservableObject {
     private func onHardwareLimitsUpdated() {
         guard let monitor = systemMonitor, monitor.numberOfFans > 0 else { return }
         ensureManualSpeedsSize()
-        manualSpeed = clampUnified(manualSpeed)
-        autoMaxSpeed = clampUnified(autoMaxSpeed)
-        if !manualSpeeds.isEmpty {
-            manualSpeeds = manualSpeeds.enumerated().map { clampToFan($0.element, index: $0.offset) }
-        }
-        saveSettings()
-
+        // Do NOT clamp the stored preferences (manualSpeed / autoMaxSpeed) to the live
+        // hardware max here. F{n}Mx reads intermittently on Apple Silicon — it flips to
+        // the unreadable fallback — and this fires on every such flip, so clamping would
+        // repeatedly shrink and re-save the user's ceiling (the "max speed forgets itself"
+        // bug). Targets are clamped to the real limit at apply time instead, so a low
+        // reading never spins the fan past hardware while the preference is preserved.
         if mode == .manual && isControlEnabled {
             applyManualTargets()
         } else if mode == .automatic && isControlEnabled {
