@@ -394,11 +394,15 @@ class StatusBarManager: ObservableObject {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            if popover.contentViewController == nil {
-                popover.contentViewController = popoverContentProvider?()
-            }
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+if popover.contentViewController == nil {
+    guard let popoverContentProvider else {
+        print("StatusBar: Popover content provider is nil")
+        return
+    }
+    popover.contentViewController = popoverContentProvider()
+}
+popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+popover.contentViewController?.view.window?.makeKey()
         }
     }
     
