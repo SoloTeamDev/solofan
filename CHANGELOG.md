@@ -2,6 +2,14 @@
 
 All notable changes to SoloFan will be documented in this file.
 
+## [1.6.5] - 2026-07-16
+
+### Fixed
+- **Menu bar popover**: Left-click opens the dashboard again. A contradictory guard required content to exist before show, which blocked the lazy content factory (content is intentionally `nil` until open).
+
+### Changed
+- Bumped app version to **1.6.5** (`MARKETING_VERSION`) and build number to **9**.
+
 ## [1.6.4] - 2026-07-16
 
 ### Fixed

@@ -385,30 +385,28 @@ class StatusBarManager: ObservableObject {
     }
 
     @objc private func togglePopover() {
-        guard let button = statusItem?.button,
-              let popover = popover else {
+        guard let button = statusItem?.button, let popover else {
             print("StatusBar: Cannot toggle - button or popover is nil")
             return
         }
 
-        guard popover.contentViewController != nil else {
-            print("StatusBar: Cannot show popover - content view controller is nil")
-            return
-        }
-        
         if popover.isShown {
             popover.performClose(nil)
-        } else {
-if popover.contentViewController == nil {
-    guard let popoverContentProvider else {
-        print("StatusBar: Popover content provider is nil")
-        return
-    }
-    popover.contentViewController = popoverContentProvider()
-}
-popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-popover.contentViewController?.view.window?.makeKey()
+            return
         }
+
+        // Content is intentionally nil until open (and cleared on close) so the
+        // SwiftUI hierarchy does not keep rendering in the background.
+        if popover.contentViewController == nil {
+            guard let popoverContentProvider else {
+                print("StatusBar: Popover content provider is nil")
+                return
+            }
+            popover.contentViewController = popoverContentProvider()
+        }
+
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
     
     func closePopover() {

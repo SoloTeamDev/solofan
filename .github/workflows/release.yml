@@ -128,8 +128,8 @@ jobs:
           ## SoloFan v${{ steps.version.outputs.version }}
 
           ### Highlights
-          - **M4/M5 fan control** — Manual speeds work in Apple Silicon system mode
-          - **Real die temps** — Stable Apple Silicon CPU/GPU readings (no ~2°C ghosts)
+          - **Menu bar popover** — Left-click opens the dashboard again (lazy content on open)
+          - Includes v1.6.4 Apple Silicon fan control and die-temp fixes
           - Persistent auto max-speed, quieter menu-bar icon, safer SMC helper
 
           ### Installation
