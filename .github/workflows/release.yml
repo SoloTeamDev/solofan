@@ -203,8 +203,8 @@ jobs:
           ## SoloFan v${{ steps.version.outputs.version }}
 
           ### Highlights
-          - **Developer ID signed + notarized** — Gatekeeper-ready macOS distribution
-          - **Menu bar popover** — Left-click opens the dashboard (lazy content on open)
+          - **Developer ID signed + notarized** — App, nested \`smc-helper\` / \`smc-write\`, and DMG; notarized and stapled for Gatekeeper
+          - **Menu bar popover fix** — Left-click opens the dashboard again (lazy content on open)
           - Includes Apple Silicon fan control and die-temp fixes from v1.6.4+
 
           ### Installation

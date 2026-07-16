@@ -2,6 +2,15 @@
 
 All notable changes to SoloFan will be documented in this file.
 
+## [1.6.6] - 2026-07-16
+
+### Fixed
+- **Release signing**: GitHub Actions now Developer ID–signs the app, nested `smc-helper` / `smc-write`, and DMG, then notarizes and staples (fixes Gatekeeper “Apple could not verify”).
+- **CI workflow YAML**: Quoted `CODESIGN_IDENTITY` so the release workflow validates.
+
+### Changed
+- Bumped app version to **1.6.6** (`MARKETING_VERSION`) and build number to **10**.
+
 ## [1.6.5] - 2026-07-16
 
 ### Fixed
