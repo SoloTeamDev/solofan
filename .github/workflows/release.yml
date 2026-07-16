@@ -12,7 +12,7 @@ permissions:
 env:
   # Must match Developer ID Application team used for distribution signing.
   APPLE_TEAM_ID: 97L93HH6B4
-  CODESIGN_IDENTITY: Developer ID Application: mohamed lounnas (97L93HH6B4)
+  CODESIGN_IDENTITY: "Developer ID Application: mohamed lounnas (97L93HH6B4)"
 
 jobs:
   build-and-release:
