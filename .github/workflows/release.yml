@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Must match Developer ID Application team used for distribution signing.
+  APPLE_TEAM_ID: 97L93HH6B4
+  CODESIGN_IDENTITY: Developer ID Application: mohamed lounnas (97L93HH6B4)
+
 jobs:
   build-and-release:
     name: Build SoloFan for macOS
@@ -34,6 +39,29 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Import Developer ID certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BUILD_CERTIFICATE_BASE64:-}" || -z "${P12_PASSWORD:-}" ]]; then
+            echo "Missing BUILD_CERTIFICATE_BASE64 or P12_PASSWORD secrets"
+            exit 1
+          fi
+          CERTIFICATE_PATH="$RUNNER_TEMP/build_certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-$(openssl rand -base64 24)}"
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
       - name: Build SoloFan
         run: |
           xcodebuild \
@@ -58,10 +86,40 @@ jobs:
           mkdir -p release
           cp -R "$BUILT_APP" release/SoloFan.app
 
-      - name: Sign application
+      - name: Sign application (Developer ID)
         run: |
+          set -euo pipefail
           chmod +x release/SoloFan.app/Contents/MacOS/*
-          codesign --force --deep --options runtime --sign - release/SoloFan.app
+
+          # Nested helpers must be signed before the app bundle (inside-out).
+          for bin in release/SoloFan.app/Contents/Resources/smc-helper release/SoloFan.app/Contents/Resources/smc-write; do
+            if [ -f "$bin" ]; then
+              codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$bin"
+            fi
+          done
+
+          codesign --force --deep --options runtime --timestamp --sign "$CODESIGN_IDENTITY" release/SoloFan.app
+          codesign --verify --deep --strict --verbose=2 release/SoloFan.app
+
+      - name: Notarize application
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          KEY_PATH="$RUNNER_TEMP/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          printf '%s\n' "$APP_STORE_CONNECT_API_KEY" > "$KEY_PATH"
+          ditto -c -k --keepParent release/SoloFan.app "$RUNNER_TEMP/SoloFan-notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/SoloFan-notarize.zip" \
+            --key "$KEY_PATH" \
+            --key-id "$APP_STORE_CONNECT_KEY_ID" \
+            --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --wait
+          xcrun stapler staple release/SoloFan.app
+          xcrun stapler validate release/SoloFan.app
+          spctl --assess --type execute -vv release/SoloFan.app
 
       - name: Create ZIP archive
         run: |
@@ -89,7 +147,7 @@ jobs:
 
           MOUNT_DIR=$(hdiutil attach -readwrite -noverify temp_solofan.dmg | grep "Volumes" | awk '{print $3}')
 
-          osascript <<EOF
+          osascript <<EOF || true
           tell application "Finder"
             tell disk "SoloFan"
               open
@@ -112,15 +170,32 @@ jobs:
           EOF
 
           sync
-          hdiutil detach "$MOUNT_DIR"
+          hdiutil detach "$MOUNT_DIR" || hdiutil detach "$MOUNT_DIR" -force
 
           hdiutil convert temp_solofan.dmg \
             -format UDZO \
             -imagekey zlib-level=9 \
             -o solofan-v${{ steps.version.outputs.version }}-macos.dmg
 
-          rm temp_solofan.dmg
-          shasum -a 256 solofan-v${{ steps.version.outputs.version }}-macos.dmg > solofan-v${{ steps.version.outputs.version }}-macos.dmg.sha256
+          rm -f temp_solofan.dmg
+
+      - name: Sign and notarize DMG
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          DMG="solofan-v${{ steps.version.outputs.version }}-macos.dmg"
+          codesign --force --timestamp --sign "$CODESIGN_IDENTITY" "$DMG"
+          KEY_PATH="$RUNNER_TEMP/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          xcrun notarytool submit "$DMG" \
+            --key "$KEY_PATH" \
+            --key-id "$APP_STORE_CONNECT_KEY_ID" \
+            --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+          shasum -a 256 "$DMG" > "${DMG}.sha256"
 
       - name: Generate release notes
         run: |
@@ -128,9 +203,9 @@ jobs:
           ## SoloFan v${{ steps.version.outputs.version }}
 
           ### Highlights
-          - **Menu bar popover** — Left-click opens the dashboard again (lazy content on open)
-          - Includes v1.6.4 Apple Silicon fan control and die-temp fixes
-          - Persistent auto max-speed, quieter menu-bar icon, safer SMC helper
+          - **Developer ID signed + notarized** — Gatekeeper-ready macOS distribution
+          - **Menu bar popover** — Left-click opens the dashboard (lazy content on open)
+          - Includes Apple Silicon fan control and die-temp fixes from v1.6.4+
 
           ### Installation
 
@@ -180,3 +255,8 @@ jobs:
             solofan-v${{ steps.version.outputs.version }}-macos.zip
             solofan-v${{ steps.version.outputs.version }}-macos.dmg
           retention-days: 30
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" 2>/dev/null || true

@@ -9,6 +9,7 @@ All notable changes to SoloFan will be documented in this file.
 
 ### Changed
 - Bumped app version to **1.6.5** (`MARKETING_VERSION`) and build number to **9**.
+- **Distribution signing**: Release builds are now **Developer ID signed and notarized** (app + DMG), including nested `smc-helper` / `smc-write` binaries. GitHub Actions uses Developer ID + App Store Connect API key instead of ad-hoc `codesign -`.
 
 ## [1.6.4] - 2026-07-16
 
